@@ -50,9 +50,12 @@ def get_history_from_previous(response_id: str) -> list[dict]:
 
 
 def responses_input_to_messages(
-    input_items: str | list[ResponseInputItemParam],
+    input_items: str | list[ResponseInputItemParam] | None,
 ) -> list[ChatCompletionMessageParam]:
     messages: list[ChatCompletionMessageParam] = []
+
+    if input_items is None:
+        return messages
 
     if isinstance(input_items, str):
         messages.append(ChatCompletionUserMessageParam(role="user", content=input_items))
@@ -69,7 +72,10 @@ def responses_input_to_messages(
 
         item_type = item.get("type")
 
-        if is_response_input_message(item):
+        # Handle items without type but with role (treat as message)
+        if item_type is None and item.get("role"):
+            messages.extend(_convert_message_item(item))
+        elif is_response_input_message(item):
             messages.extend(_convert_message_item(item))
         elif is_response_function_call(item):
             messages.append(_convert_function_call_to_assistant(item))
