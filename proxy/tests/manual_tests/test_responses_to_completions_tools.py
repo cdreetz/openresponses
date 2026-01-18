@@ -1,16 +1,17 @@
 """
 Manual test: Responses API with tools -> Chat Completions conversion
-Run: uv run tests/manual_tests/test_responses_to_completions_tools.py
+Run: uv run proxy/tests/manual_tests/test_responses_to_completions_tools.py
 """
+import json
 import os
+import sys
 import time
 import subprocess
 import signal
-import sys
 import urllib.request
 import urllib.error
 from pathlib import Path
-from openai import OpenAI
+from typing import Any
 
 PROXY_PORT = 8766
 PROXY_URL = f"http://localhost:{PROXY_PORT}/v1"
@@ -29,6 +30,41 @@ WEATHER_TOOL = {
     },
 }
 
+REQUIRED_FUNCTION_CALL_FIELDS = {
+    "type": str,
+    "id": str,
+    "name": str,
+    "arguments": str,
+    "status": str,
+}
+
+
+class TestFailure(Exception):
+    pass
+
+
+def assert_eq(actual: Any, expected: Any, msg: str) -> None:
+    if actual != expected:
+        raise TestFailure(f"{msg}: expected {expected!r}, got {actual!r}")
+
+
+def assert_true(condition: bool, msg: str) -> None:
+    if not condition:
+        raise TestFailure(msg)
+
+
+def assert_type(value: Any, expected_type: type | tuple, field: str) -> None:
+    if not isinstance(value, expected_type):
+        raise TestFailure(
+            f"Field '{field}': expected type {expected_type}, got {type(value).__name__}"
+        )
+
+
+def assert_field_exists(obj: dict, field: str, context: str) -> Any:
+    if field not in obj:
+        raise TestFailure(f"{context}: missing required field '{field}'")
+    return obj[field]
+
 
 def get_repo_root() -> Path:
     path = Path(__file__).resolve()
@@ -36,7 +72,7 @@ def get_repo_root() -> Path:
         if (path / "proxy").is_dir() and (path / "proxy" / "cli.py").exists():
             return path
         path = path.parent
-    raise RuntimeError("Could not find repo root")
+    raise TestFailure("Could not find repo root")
 
 
 def wait_for_server(url: str, timeout: int = 10) -> bool:
@@ -66,72 +102,104 @@ def start_proxy() -> subprocess.Popen:
     if not wait_for_server(PROXY_URL):
         proc.terminate()
         stdout, stderr = proc.communicate(timeout=5)
-        print("Server failed to start!")
-        print(f"stdout: {stdout.decode()}")
-        print(f"stderr: {stderr.decode()}")
-        raise RuntimeError("Proxy server failed to start")
+        raise TestFailure(
+            f"Server failed to start.\nstdout: {stdout.decode()}\nstderr: {stderr.decode()}"
+        )
 
     return proc
 
 
-def main():
-    print("Starting proxy server...")
+def validate_function_call(fc: dict, context: str) -> None:
+    for field, expected_type in REQUIRED_FUNCTION_CALL_FIELDS.items():
+        value = assert_field_exists(fc, field, context)
+        assert_type(value, expected_type, f"{context}.{field}")
+
+    assert_eq(fc["type"], "function_call", f"{context}.type")
+    assert_eq(fc["status"], "completed", f"{context}.status")
+
+    assert_true(len(fc["id"]) > 0, f"{context}.id is empty")
+    assert_true(len(fc["name"]) > 0, f"{context}.name is empty")
+
+    try:
+        args = json.loads(fc["arguments"])
+        assert_type(args, dict, f"{context}.arguments (parsed)")
+    except json.JSONDecodeError as e:
+        raise TestFailure(f"{context}.arguments is not valid JSON: {e}")
+
+
+def main() -> int:
+    from openai import OpenAI
+
+    print("=" * 60)
+    print("TEST: Responses API with Tools -> Chat Completions")
+    print("=" * 60)
+
+    print("\n[1/5] Starting proxy server...")
     proxy_proc = start_proxy()
-    print("Server ready!")
+    print("      Server ready")
 
     try:
         proxy_client = OpenAI(base_url=PROXY_URL, api_key=os.getenv("OPENAI_API_KEY", ""))
-        real_client = OpenAI()
 
-        test_input = "What's the weather in Tokyo?"
-        model = "gpt-4o-mini"
-
-        print(f"\n{'='*60}")
-        print("Making request through PROXY with tools...")
-        print(f"{'='*60}")
-
+        print("\n[2/5] Making request through proxy with tools...")
         proxy_response = proxy_client.responses.create(
-            model=model,
-            input=test_input,
+            model="gpt-4o-mini",
+            input="What's the weather in Tokyo?",
             tools=[WEATHER_TOOL],
         )
-        print(f"Proxy response ID: {proxy_response.id}")
-        print(f"Proxy output items: {len(proxy_response.output)}")
-        for i, item in enumerate(proxy_response.output):
-            print(f"  [{i}] type={item.type}")
-            if item.type == "function_call":
-                print(f"      name={item.name}, arguments={item.arguments}")
+        proxy_dict = proxy_response.model_dump()
+        print(f"      Response ID: {proxy_dict.get('id', 'MISSING')}")
 
-        print(f"\n{'='*60}")
-        print("Making request to REAL OpenAI with tools...")
-        print(f"{'='*60}")
+        print("\n[3/5] Validating response has function_call output...")
+        output = assert_field_exists(proxy_dict, "output", "response")
+        assert_type(output, list, "response.output")
+        assert_true(len(output) > 0, "response.output is empty")
 
-        real_response = real_client.responses.create(
-            model=model,
-            input=test_input,
-            tools=[WEATHER_TOOL],
+        function_calls = [item for item in output if item.get("type") == "function_call"]
+        assert_true(
+            len(function_calls) > 0,
+            f"No function_call in output. Got types: {[item.get('type') for item in output]}"
         )
-        print(f"Real response ID: {real_response.id}")
-        print(f"Real output items: {len(real_response.output)}")
-        for i, item in enumerate(real_response.output):
-            print(f"  [{i}] type={item.type}")
-            if item.type == "function_call":
-                print(f"      name={item.name}, arguments={item.arguments}")
 
-        print(f"\n{'='*60}")
-        print("Comparing output item types...")
-        print(f"{'='*60}")
+        print(f"      Found {len(function_calls)} function call(s)")
 
-        proxy_types = [item.type for item in proxy_response.output]
-        real_types = [item.type for item in real_response.output]
+        print("\n[4/5] Validating function call structure...")
+        for i, fc in enumerate(function_calls):
+            validate_function_call(fc, f"function_call[{i}]")
+            print(f"      [{i}] name={fc['name']}, args={fc['arguments']}")
 
-        print(f"Proxy output types: {proxy_types}")
-        print(f"Real output types: {real_types}")
+        print("\n[5/5] Validating function call content...")
+        first_fc = function_calls[0]
+        assert_eq(first_fc["name"], "get_weather", "function_call.name")
 
-        if proxy_types == real_types:
-            print("Output item types match!")
-        else:
-            print("Output item types differ!")
+        args = json.loads(first_fc["arguments"])
+        location = assert_field_exists(args, "location", "function_call.arguments")
+        assert_type(location, str, "function_call.arguments.location")
+        assert_true(len(location) > 0, "function_call.arguments.location is empty")
+        assert_true(
+            "tokyo" in location.lower(),
+            f"Expected 'tokyo' in location, got: {location}"
+        )
+        print(f"      Location extracted: {location}")
+
+        print("\n" + "=" * 60)
+        print("PASSED: All validations succeeded")
+        print("=" * 60)
+        return 0
+
+    except TestFailure as e:
+        print(f"\n{'=' * 60}")
+        print(f"FAILED: {e}")
+        print("=" * 60)
+        return 1
+
+    except Exception as e:
+        print(f"\n{'=' * 60}")
+        print(f"ERROR: Unexpected exception: {e}")
+        print("=" * 60)
+        import traceback
+        traceback.print_exc()
+        return 1
 
     finally:
         print("\nStopping proxy server...")
@@ -140,4 +208,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
