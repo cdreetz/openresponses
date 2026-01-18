@@ -19,7 +19,7 @@ UPSTREAM_URL = os.getenv("UPSTREAM_URL", "https://api.openai.com/v1/chat/complet
 REQUIRED_RESPONSE_FIELDS = {
     "id": str,
     "object": str,
-    "created_at": int,
+    "created_at": (int, float),
     "status": str,
     "model": str,
     "output": list,
