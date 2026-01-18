@@ -25,16 +25,30 @@ from proxy.utils.type_helpers import (
     warn_conversion,
 )
 from proxy.utils.utils import generate_id, timestamp, extract_text_from_content
+from proxy import store
+
+
+def get_history_from_previous(response_id: str) -> list[dict]:
+    """Build message history from a stored response chain."""
+    history: list[dict] = []
+    current_id: str | None = response_id
+
+    while current_id:
+        resp = store.get(current_id)
+        if not resp:
+            break
+
+        items = resp.get("input", []) + resp.get("output", [])
+        history = responses_input_to_messages(items) + history
+        current_id = resp.get("previous_response_id")
+
+    return history
 
 
 def responses_input_to_messages(
     input_items: str | list[ResponseInputItemParam],
-    instructions: str | None = None,
 ) -> list[ChatCompletionMessageParam]:
     messages: list[ChatCompletionMessageParam] = []
-
-    if instructions:
-        messages.append(ChatCompletionSystemMessageParam(role="system", content=instructions))
 
     if isinstance(input_items, str):
         messages.append(ChatCompletionUserMessageParam(role="user", content=input_items))
@@ -102,10 +116,15 @@ def _convert_function_call_output(item: dict) -> ChatCompletionToolMessageParam:
 
 
 def responses_request_to_chat(body: dict) -> dict[str, Any]:
-    messages = responses_input_to_messages(
-        body.get("input", []),
-        body.get("instructions"),
-    )
+    messages: list[ChatCompletionMessageParam] = []
+
+    if body.get("instructions"):
+        messages.append(ChatCompletionSystemMessageParam(role="system", content=body["instructions"]))
+
+    if body.get("previous_response_id"):
+        messages.extend(get_history_from_previous(body["previous_response_id"]))
+
+    messages.extend(responses_input_to_messages(body.get("input", [])))
 
     result: dict[str, Any] = {"messages": messages}
 
