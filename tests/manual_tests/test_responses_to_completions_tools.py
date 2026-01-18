@@ -1,12 +1,14 @@
 """
 Manual test: Responses API with tools -> Chat Completions conversion
-Run: python -m tests.manual_tests.test_responses_to_completions_tools
+Run from repo root: python -m tests.manual_tests.test_responses_to_completions_tools
 """
 import os
 import time
 import subprocess
 import signal
 import sys
+import urllib.request
+import urllib.error
 from openai import OpenAI
 
 PROXY_PORT = 8766
@@ -27,22 +29,42 @@ WEATHER_TOOL = {
 }
 
 
+def wait_for_server(url: str, timeout: int = 10) -> bool:
+    start = time.time()
+    while time.time() - start < timeout:
+        try:
+            urllib.request.urlopen(f"{url.rstrip('/v1')}/health", timeout=1)
+            return True
+        except urllib.error.URLError:
+            time.sleep(0.2)
+    return False
+
+
 def start_proxy() -> subprocess.Popen:
     env = os.environ.copy()
     env["UPSTREAM_URL"] = UPSTREAM_URL
+
     proc = subprocess.Popen(
         [sys.executable, "-m", "proxy.cli", "--port", str(PROXY_PORT)],
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
-    time.sleep(1)
+
+    if not wait_for_server(PROXY_URL):
+        stdout, stderr = proc.communicate(timeout=2)
+        print("Server failed to start!")
+        print(f"stdout: {stdout.decode()}")
+        print(f"stderr: {stderr.decode()}")
+        raise RuntimeError("Proxy server failed to start")
+
     return proc
 
 
 def main():
     print("Starting proxy server...")
     proxy_proc = start_proxy()
+    print("Server ready!")
 
     try:
         proxy_client = OpenAI(base_url=PROXY_URL, api_key=os.getenv("OPENAI_API_KEY", ""))
