@@ -38,7 +38,7 @@ async def handle_responses(request: web.Request) -> web.Response:
     body = await request.json()
     api_key = get_api_key(request)
 
-    chat_body = responses_request_to_chat(body, api_key)
+    chat_body = responses_request_to_chat(body)
     chat_resp, status = await forward_to_upstream(chat_body, api_key)
 
     if status != 200:
@@ -48,7 +48,7 @@ async def handle_responses(request: web.Request) -> web.Response:
 
     if body.get("store", False):
         response["input"] = body.get("input", [])
-        store.save(api_key, response)
+        store.save(response)
 
     return web.json_response(response)
 
