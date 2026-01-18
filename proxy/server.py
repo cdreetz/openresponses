@@ -190,8 +190,27 @@ async def handle_responses_streaming(
         )
         await response.write(format_sse_event(item_done).encode())
 
+    final_output: list[dict] = []
+    if content_started:
+        final_output.append({
+            "type": "message",
+            "id": message_id,
+            "status": "completed",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": accumulated_text, "annotations": []}],
+        })
+    for idx, tc in sorted(tool_calls.items()):
+        final_output.append({
+            "type": "function_call",
+            "id": tc["id"],
+            "call_id": tc["call_id"],
+            "name": tc["name"],
+            "arguments": tc["arguments"],
+            "status": "completed",
+        })
+
     completed_event = build_response_completed_event(
-        response_id, message_id, accumulated_text, body, usage
+        response_id, final_output, body, usage
     )
     await response.write(format_sse_event(completed_event).encode())
 

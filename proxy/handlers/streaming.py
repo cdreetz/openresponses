@@ -149,8 +149,7 @@ def build_output_item_done_event(item_id: str, text: str) -> dict:
 
 def build_response_completed_event(
     response_id: str,
-    item_id: str,
-    text: str,
+    output: list[dict],
     original_body: dict,
     usage: dict | None,
 ) -> dict:
@@ -164,21 +163,7 @@ def build_response_completed_event(
             "created_at": now,
             "status": "completed",
             "model": original_body.get("model", "unknown"),
-            "output": [
-                {
-                    "type": "message",
-                    "id": item_id,
-                    "status": "completed",
-                    "role": "assistant",
-                    "content": [
-                        {
-                            "type": "output_text",
-                            "text": text,
-                            "annotations": [],
-                        }
-                    ],
-                }
-            ],
+            "output": output,
             "usage": usage or {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
             "error": None,
             "incomplete_details": None,
