@@ -28,13 +28,12 @@ from proxy.utils.utils import generate_id, timestamp, extract_text_from_content
 from proxy import store
 
 
-def get_history_from_previous(response_id: str) -> list[dict]:
-    """Build message history from a stored response chain."""
+def get_history_from_previous(user_id: str, response_id: str) -> list[dict]:
     history: list[dict] = []
     current_id: str | None = response_id
 
     while current_id:
-        resp = store.get(current_id)
+        resp = store.get(user_id, current_id)
         if not resp:
             break
 
@@ -115,14 +114,14 @@ def _convert_function_call_output(item: dict) -> ChatCompletionToolMessageParam:
     )
 
 
-def responses_request_to_chat(body: dict) -> dict[str, Any]:
+def responses_request_to_chat(body: dict, user_id: str) -> dict[str, Any]:
     messages: list[ChatCompletionMessageParam] = []
 
     if body.get("instructions"):
         messages.append(ChatCompletionSystemMessageParam(role="system", content=body["instructions"]))
 
     if body.get("previous_response_id"):
-        messages.extend(get_history_from_previous(body["previous_response_id"]))
+        messages.extend(get_history_from_previous(user_id, body["previous_response_id"]))
 
     messages.extend(responses_input_to_messages(body.get("input", [])))
 

@@ -36,8 +36,10 @@ async def forward_to_upstream(body: dict, api_key: str) -> tuple[dict, int]:
 
 async def handle_responses(request: web.Request) -> web.Response:
     body = await request.json()
-    chat_body = responses_request_to_chat(body)
-    chat_resp, status = await forward_to_upstream(chat_body, get_api_key(request))
+    api_key = get_api_key(request)
+
+    chat_body = responses_request_to_chat(body, api_key)
+    chat_resp, status = await forward_to_upstream(chat_body, api_key)
 
     if status != 200:
         return web.json_response(chat_resp, status=status)
@@ -46,7 +48,7 @@ async def handle_responses(request: web.Request) -> web.Response:
 
     if body.get("store", False):
         response["input"] = body.get("input", [])
-        store.save(response)
+        store.save(api_key, response)
 
     return web.json_response(response)
 
