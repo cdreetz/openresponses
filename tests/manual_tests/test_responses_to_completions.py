@@ -1,6 +1,6 @@
 """
 Manual test: Basic Responses API -> Chat Completions conversion
-Run from repo root: python -m tests.manual_tests.test_responses_to_completions
+Run: uv run tests/manual_tests/test_responses_to_completions.py
 """
 import os
 import time
@@ -9,11 +9,21 @@ import signal
 import sys
 import urllib.request
 import urllib.error
+from pathlib import Path
 from openai import OpenAI
 
 PROXY_PORT = 8765
 PROXY_URL = f"http://localhost:{PROXY_PORT}/v1"
 UPSTREAM_URL = os.getenv("UPSTREAM_URL", "https://api.openai.com/v1/chat/completions")
+
+
+def get_repo_root() -> Path:
+    path = Path(__file__).resolve()
+    while path.parent != path:
+        if (path / "proxy").is_dir() and (path / "proxy" / "cli.py").exists():
+            return path
+        path = path.parent
+    raise RuntimeError("Could not find repo root")
 
 
 def wait_for_server(url: str, timeout: int = 10) -> bool:
@@ -28,18 +38,21 @@ def wait_for_server(url: str, timeout: int = 10) -> bool:
 
 
 def start_proxy() -> subprocess.Popen:
+    repo_root = get_repo_root()
     env = os.environ.copy()
     env["UPSTREAM_URL"] = UPSTREAM_URL
 
     proc = subprocess.Popen(
         [sys.executable, "-m", "proxy.cli", "--port", str(PROXY_PORT)],
+        cwd=str(repo_root),
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
 
     if not wait_for_server(PROXY_URL):
-        stdout, stderr = proc.communicate(timeout=2)
+        proc.terminate()
+        stdout, stderr = proc.communicate(timeout=5)
         print("Server failed to start!")
         print(f"stdout: {stdout.decode()}")
         print(f"stderr: {stderr.decode()}")
