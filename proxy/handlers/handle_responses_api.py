@@ -191,8 +191,8 @@ def chat_response_to_responses(chat_resp: dict, original_body: dict) -> dict[str
         "parallel_tool_calls": original_body.get("parallel_tool_calls", True),
         "truncation": original_body.get("truncation", "disabled"),
         "store": original_body.get("store", False),
-        "frequency_penalty": original_body.get("frequency_penalty", 0),
-        "presence_penalty": original_body.get("presence_penalty", 0),
+        "frequency_penalty": original_body.get("frequency_penalty", 0.0),
+        "presence_penalty": original_body.get("presence_penalty", 0.0),
         "prompt_cache_retention": None,
         "billing": None,
     }

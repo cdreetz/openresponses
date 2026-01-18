@@ -1,7 +1,8 @@
 """
 Manual test: Basic Responses API -> Chat Completions conversion
-Run: uv run tests/manual_tests/test_responses_to_completions.py
+Run: uv run proxy/tests/manual_tests/test_responses_to_completions.py
 """
+import json
 import os
 import time
 import subprocess
@@ -63,7 +64,6 @@ def start_proxy() -> subprocess.Popen:
 
 def compare_structure(proxy_resp: dict, real_resp: dict, path: str = "") -> list[str]:
     diffs = []
-
     proxy_keys = set(proxy_resp.keys()) if isinstance(proxy_resp, dict) else set()
     real_keys = set(real_resp.keys()) if isinstance(real_resp, dict) else set()
 
@@ -90,6 +90,10 @@ def compare_structure(proxy_resp: dict, real_resp: dict, path: str = "") -> list
     return diffs
 
 
+def pp(obj: dict) -> str:
+    return json.dumps(obj, indent=2, default=str)
+
+
 def main():
     print("Starting proxy server...")
     proxy_proc = start_proxy()
@@ -103,47 +107,32 @@ def main():
         model = "gpt-4o-mini"
 
         print(f"\n{'='*60}")
-        print("Making request through PROXY...")
-        print(f"{'='*60}")
+        print("PROXY Response")
+        print('='*60)
 
-        proxy_response = proxy_client.responses.create(
-            model=model,
-            input=test_input,
-        )
-        print(f"Proxy response ID: {proxy_response.id}")
-        print(f"Proxy output: {proxy_response.output}")
-
-        print(f"\n{'='*60}")
-        print("Making request to REAL OpenAI...")
-        print(f"{'='*60}")
-
-        real_response = real_client.responses.create(
-            model=model,
-            input=test_input,
-        )
-        print(f"Real response ID: {real_response.id}")
-        print(f"Real output: {real_response.output}")
-
-        print(f"\n{'='*60}")
-        print("Comparing response structures...")
-        print(f"{'='*60}")
-
+        proxy_response = proxy_client.responses.create(model=model, input=test_input)
         proxy_dict = proxy_response.model_dump()
+        print(pp(proxy_dict))
+
+        print(f"\n{'='*60}")
+        print("REAL OpenAI Response")
+        print('='*60)
+
+        real_response = real_client.responses.create(model=model, input=test_input)
         real_dict = real_response.model_dump()
+        print(pp(real_dict))
+
+        print(f"\n{'='*60}")
+        print("Structure Comparison")
+        print('='*60)
 
         diffs = compare_structure(proxy_dict, real_dict)
-
         if diffs:
-            print("Structure differences found:")
+            print("Differences:")
             for diff in diffs:
                 print(f"  - {diff}")
         else:
             print("Structures match!")
-
-        print(f"\n{'='*60}")
-        print("PROXY response keys:", list(proxy_dict.keys()))
-        print(f"{'='*60}")
-        print("REAL response keys:", list(real_dict.keys()))
 
     finally:
         print("\nStopping proxy server...")
