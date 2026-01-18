@@ -37,8 +37,13 @@ def get_history_from_previous(response_id: str) -> list[dict]:
         if not resp:
             break
 
-        items = resp.get("input", []) + resp.get("output", [])
-        history = responses_input_to_messages(items) + history
+        inp = resp.get("input", [])
+        out = resp.get("output", [])
+
+        input_msgs = responses_input_to_messages(inp)
+        output_msgs = responses_input_to_messages(out)
+
+        history = input_msgs + output_msgs + history
         current_id = resp.get("previous_response_id")
 
     return history
