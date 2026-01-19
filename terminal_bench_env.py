@@ -179,6 +179,7 @@ touch /tmp/vf_complete
         # Debug: see what opencode is sending
         print(f"=== RAW REQUEST ===")
         print(f"previous_response_id: {body.get('previous_response_id')}")
+        print(f"stream: {body.get('stream')}")
         print(f"input type: {type(body.get('input'))}")
         if isinstance(body.get('input'), list):
             print(f"input items: {[item.get('type') if isinstance(item, dict) else type(item) for item in body.get('input', [])]}")
