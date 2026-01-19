@@ -102,6 +102,7 @@ def main() -> int:
             instructions="You are a helpful assistant. When asked to list files, use the bash tool with 'ls' command.",
             input="List the files in the current directory",
             tools=tools,
+            store=True,  # Required for previous_response_id to work
         )
 
         print(f"      Response 1 ID: {resp1.id}")
@@ -119,6 +120,7 @@ def main() -> int:
                 model=model,
                 input="What did I just ask you?",
                 previous_response_id=resp1.id,
+                store=True,
             )
             print(f"      Response 2 ID: {resp2.id}")
             print(f"      Response 2 text: {resp2.output[0].content[0].text[:100] if resp2.output else 'None'}...")
@@ -155,6 +157,7 @@ def main() -> int:
             ],
             previous_response_id=resp1.id,
             tools=tools,
+            store=True,
         )
 
         print(f"      Response 2 ID: {resp2.id}")
@@ -173,6 +176,7 @@ def main() -> int:
             input="Which of those files is a Python file?",
             previous_response_id=resp2.id,
             tools=tools,
+            store=True,
         )
 
         print(f"      Response 3 ID: {resp3.id}")
