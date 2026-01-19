@@ -87,7 +87,7 @@ def wait_for_server(url: str, timeout: int = 10) -> bool:
     start = time.time()
     while time.time() - start < timeout:
         try:
-            urllib.request.urlopen(f"{url.rstrip('/v1')}/health", timeout=1)
+            urllib.request.urlopen(f"{url.removesuffix('/v1')}/health", timeout=1)
             return True
         except urllib.error.URLError:
             time.sleep(0.2)
