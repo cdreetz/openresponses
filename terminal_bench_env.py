@@ -185,14 +185,44 @@ touch /tmp/vf_complete
         if rollout_id not in self.rollout_histories:
             self.rollout_histories[rollout_id] = []
 
-        # If agent only sent [system, user], inject stored history
-        if (len(messages) == 2
-            and messages[0].get("role") == "system"
-            and messages[1].get("role") == "user"):
-            stored = self.rollout_histories[rollout_id]
-            if stored:
+        stored = self.rollout_histories[rollout_id]
+
+        # Check if current request has tool responses
+        has_tool_responses = any(m.get("role") == "tool" for m in messages)
+
+        # Check if stored history has pending tool calls
+        has_pending_tool_calls = False
+        if stored:
+            last_msg = stored[-1]
+            if last_msg.get("role") == "assistant" and last_msg.get("tool_calls"):
+                has_pending_tool_calls = True
+
+        # Handle history injection based on request type
+        if has_tool_responses and has_pending_tool_calls:
+            # Request has tool responses - add them to history first
+            tool_messages = [m for m in messages if m.get("role") == "tool"]
+            for tool_msg in tool_messages:
+                stored.append(tool_msg)
+            print(f"=== ADDED {len(tool_messages)} tool responses to history ===")
+
+            # Now inject full history (system + user + history)
+            sys_msg = next((m for m in messages if m.get("role") == "system"), None)
+            user_msg = next((m for m in messages if m.get("role") == "user"), None)
+            if sys_msg and user_msg:
+                messages = [sys_msg, user_msg] + stored
+                print(f"=== INJECTED {len(stored)} messages from history ===")
+
+        elif (len(messages) == 2
+              and messages[0].get("role") == "system"
+              and messages[1].get("role") == "user"):
+            # Agent only sent [system, user]
+            if stored and not has_pending_tool_calls:
+                # Safe to inject - no pending tool calls
                 messages = [messages[0], messages[1]] + stored
                 print(f"=== INJECTED {len(stored)} messages from history ===")
+            elif has_pending_tool_calls:
+                # Don't inject incomplete history - would create invalid sequence
+                print(f"=== SKIPPED INJECTION: history has pending tool calls ===")
 
         print(f"=== RESPONSES REQUEST (rollout={rollout_id}) ===")
         print(f"Messages: {len(messages)}, Tools: {len(tools) if tools else 0}")
