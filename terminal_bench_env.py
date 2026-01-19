@@ -23,6 +23,20 @@ from proxy.handlers.handle_responses_api import (
     responses_request_to_chat,
     chat_response_to_responses,
 )
+from proxy.handlers.streaming import (
+    build_response_created_event,
+    build_output_item_added_event,
+    build_content_part_added_event,
+    build_text_done_event,
+    build_content_part_done_event,
+    build_output_item_done_event,
+    build_response_completed_event,
+    build_function_call_item_added_event,
+    build_function_call_args_done_event,
+    build_function_call_item_done_event,
+    format_sse_event,
+)
+from proxy.utils.utils import generate_id
 from proxy import store
 
 
@@ -219,15 +233,132 @@ touch /tmp/vf_complete
 
         response_dict = response.model_dump() if hasattr(response, "model_dump") else dict(response)
 
-        # Convert Chat Completions response back to Responses API format
-        responses_output = chat_response_to_responses(response_dict, body)
+        # Handle streaming vs non-streaming response
+        if body.get("stream", False):
+            return await self._stream_response(request, response_dict, body)
 
-        # Save to store so previous_response_id lookups work
+        # Non-streaming: return JSON
+        responses_output = chat_response_to_responses(response_dict, body)
         responses_output["input"] = body.get("input", [])
         store.save(responses_output)
         print(f"=== SAVED TO STORE: {responses_output['id']} ===")
-
         return web.json_response(responses_output)
+
+    async def _stream_response(
+        self, request, chat_response: dict, original_body: dict
+    ) -> web.StreamResponse:
+        """Stream the response as SSE events."""
+        response = web.StreamResponse(
+            status=200,
+            headers={
+                "Content-Type": "text/event-stream",
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+            },
+        )
+        await response.prepare(request)
+
+        response_id = generate_id("resp")
+        message_id = generate_id("msg")
+
+        # Send response.created
+        created_event = build_response_created_event(response_id, original_body)
+        await response.write(format_sse_event(created_event).encode())
+
+        # Get the message from chat response
+        choice = chat_response.get("choices", [{}])[0]
+        message = choice.get("message", {})
+        content = message.get("content", "")
+        tool_calls = message.get("tool_calls", [])
+
+        # Build output list for final event
+        final_output = []
+
+        # Handle text content
+        if content:
+            # Send output_item.added for message
+            item_added = build_output_item_added_event(response_id, message_id, 0)
+            await response.write(format_sse_event(item_added).encode())
+
+            # Send content_part.added
+            part_added = build_content_part_added_event(response_id, message_id, 0)
+            await response.write(format_sse_event(part_added).encode())
+
+            # Send text.done (all at once since we have complete response)
+            text_done = build_text_done_event(response_id, message_id, 0, content)
+            await response.write(format_sse_event(text_done).encode())
+
+            # Send content_part.done
+            part_done = build_content_part_done_event(response_id, message_id, 0, content)
+            await response.write(format_sse_event(part_done).encode())
+
+            # Send output_item.done
+            item_done = build_output_item_done_event(response_id, message_id, 0, content)
+            await response.write(format_sse_event(item_done).encode())
+
+            final_output.append({
+                "type": "message",
+                "id": message_id,
+                "status": "completed",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": content, "annotations": []}],
+            })
+
+        # Handle tool calls
+        for i, tc in enumerate(tool_calls):
+            fc_id = generate_id("fc")
+            call_id = tc.get("id", generate_id("call"))
+            name = tc["function"]["name"]
+            arguments = tc["function"]["arguments"]
+            output_index = len(final_output)
+
+            # Send function_call item added
+            fc_added = build_function_call_item_added_event(
+                response_id, fc_id, call_id, name, output_index
+            )
+            await response.write(format_sse_event(fc_added).encode())
+
+            # Send arguments done
+            args_done = build_function_call_args_done_event(
+                response_id, fc_id, call_id, arguments, output_index
+            )
+            await response.write(format_sse_event(args_done).encode())
+
+            # Send function_call item done
+            fc_done = build_function_call_item_done_event(
+                response_id, fc_id, call_id, name, arguments, output_index
+            )
+            await response.write(format_sse_event(fc_done).encode())
+
+            final_output.append({
+                "type": "function_call",
+                "id": fc_id,
+                "call_id": call_id,
+                "name": name,
+                "arguments": arguments,
+                "status": "completed",
+            })
+
+        # Send response.completed
+        usage = chat_response.get("usage", {})
+        completed_event = build_response_completed_event(
+            response_id, final_output, original_body, usage
+        )
+        await response.write(format_sse_event(completed_event).encode())
+
+        # Save to store
+        responses_output = {
+            "id": response_id,
+            "object": "response",
+            "status": "completed",
+            "output": final_output,
+            "input": original_body.get("input", []),
+        }
+        store.save(responses_output)
+        print(f"=== SAVED TO STORE (streaming): {response_id} ===")
+
+        await response.write_eof()
+        return response
 
     def _fake_title_response(self) -> web.Response:
         """Return a fake response for title generation requests."""
