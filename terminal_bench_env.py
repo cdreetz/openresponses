@@ -176,6 +176,15 @@ touch /tmp/vf_complete
         if body.get("model") == "gpt-5-nano":
             return self._fake_title_response()
 
+        # Debug: see what opencode is sending
+        print(f"=== RAW REQUEST ===")
+        print(f"previous_response_id: {body.get('previous_response_id')}")
+        print(f"input type: {type(body.get('input'))}")
+        if isinstance(body.get('input'), list):
+            print(f"input items: {[item.get('type') if isinstance(item, dict) else type(item) for item in body.get('input', [])]}")
+        else:
+            print(f"input: {str(body.get('input', ''))[:100]}")
+
         # Convert Responses API request to Chat Completions format
         # This handles previous_response_id by looking up history in the store
         chat_body = responses_request_to_chat(body)
@@ -215,6 +224,7 @@ touch /tmp/vf_complete
         # Save to store so previous_response_id lookups work
         responses_output["input"] = body.get("input", [])
         store.save(responses_output)
+        print(f"=== SAVED TO STORE: {responses_output['id']} ===")
 
         return web.json_response(responses_output)
 
