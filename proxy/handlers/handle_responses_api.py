@@ -61,8 +61,25 @@ def responses_input_to_messages(
         messages.append(ChatCompletionUserMessageParam(role="user", content=input_items))
         return messages
 
+    # First pass: collect function_calls that need to be grouped
+    pending_tool_calls: list[ChatCompletionMessageToolCallParam] = []
+    pending_tool_outputs: list[ChatCompletionToolMessageParam] = []
+
+    def flush_pending_tools():
+        nonlocal pending_tool_calls, pending_tool_outputs
+        if pending_tool_calls:
+            messages.append(ChatCompletionAssistantMessageParam(
+                role="assistant",
+                content=None,
+                tool_calls=pending_tool_calls,
+            ))
+            pending_tool_calls = []
+        messages.extend(pending_tool_outputs)
+        pending_tool_outputs = []
+
     for item in input_items:
         if isinstance(item, str):
+            flush_pending_tools()
             messages.append(ChatCompletionUserMessageParam(role="user", content=item))
             continue
 
@@ -74,15 +91,33 @@ def responses_input_to_messages(
 
         # Handle items without type but with role (treat as message)
         if item_type is None and item.get("role"):
+            flush_pending_tools()
             messages.extend(_convert_message_item(item))
         elif is_response_input_message(item):
+            flush_pending_tools()
             messages.extend(_convert_message_item(item))
         elif is_response_function_call(item):
-            messages.append(_convert_function_call_to_assistant(item))
+            # Collect function_calls to group into single assistant message
+            call_id = item.get("call_id") or item.get("id") or generate_id("call")
+            pending_tool_calls.append(
+                ChatCompletionMessageToolCallParam(
+                    id=call_id,
+                    type="function",
+                    function=Function(name=item["name"], arguments=item["arguments"]),
+                )
+            )
         elif is_response_function_call_output(item):
-            messages.append(_convert_function_call_output(item))
+            # Collect outputs - they follow the assistant message with tool_calls
+            pending_tool_outputs.append(ChatCompletionToolMessageParam(
+                role="tool",
+                tool_call_id=item["call_id"],
+                content=item["output"],
+            ))
         else:
             warn_unsupported(f"item type '{item_type}'", "responses_input_to_messages")
+
+    # Flush any remaining pending tools
+    flush_pending_tools()
 
     return messages
 
